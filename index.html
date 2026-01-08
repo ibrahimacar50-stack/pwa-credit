@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Simulation crédits immo & conso</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#007aff">
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+
+<style>
+html,body{margin:0;padding:0;background:#f4f6f8;font-family:Arial}
+.box{background:#fff;padding:16px;min-height:100vh}
+input,select,button{width:100%;padding:10px;margin:4px;font-size:16px}
+button{background:#007aff;color:#fff;border:none;border-radius:6px}
+.hidden{display:none}
+table{width:100%;border-collapse:collapse;margin-top:15px;font-size:13px}
+th,td{border:1px solid #ccc;padding:6px;text-align:center}
+th{background:#eee}
+.pos{color:green;font-weight:bold}
+.neg{color:red;font-weight:bold}
+.delete{background:red}
+.edit{background:orange}
+#graph{width:100%;height:300px}
+.result{margin-top:15px;font-size:18px;font-weight:bold}
+</style>
+</head>
+
+<body>
+<div class="box">
+
+<h2>Simulation crédits (immobilier & conso)</h2>
+
+<!-- ================= PROFILS ================= -->
+
+<h3>Profil financier</h3>
+
+<select id="profileSelect"></select>
+
+<input id="profileName" placeholder="Nom du profil">
+<input id="profileSalaire" type="number" placeholder="Salaire mensuel (€)">
+<input id="profileCharges" type="number" placeholder="Charges fixes mensuelles (€)">
+
+<button onclick="saveProfile()">Enregistrer / Modifier le profil</button>
+<button class="delete" onclick="deleteProfile()">Supprimer le profil</button>
+
+<hr>
+
+<!-- ================= PROJET ================= -->
+
+<input id="nom" placeholder="Nom du projet">
+
+<select id="type" onchange="changerType()">
+  <option value="immo">Crédit immobilier</option>
+  <option value="conso">Crédit conso</option>
+</select>
+
+<div id="blocImmo">
+  <input id="prix" type="number" placeholder="Prix d'achat">
+  <input id="apport" type="number" placeholder="Apport personnel">
+  <input id="loyer" type="number" placeholder="Loyer mensuel">
+</div>
+
+<div id="blocConso" class="hidden">
+  <input id="creditConso" type="number" placeholder="Montant du crédit conso">
+</div>
+
+<input id="taux" type="number" step="0.01" placeholder="Taux %">
+<input id="duree" type="number" placeholder="Durée (années)">
+<input id="tauxLoyer" type="number" value="70" placeholder="% loyer retenu">
+
+<button onclick="ajouter()">Ajouter la ligne</button>
+<button onclick="window.print()">Exporter PDF</button>
+
+<!-- ================= TABLE ================= -->
+
+<table>
+<thead>
+<tr>
+<th>Projet</th><th>Type</th><th>Prix</th><th>Apport</th><th>Notaire</th>
+<th>Crédit</th><th>Loyer</th><th>Mensualité</th><th>Endettement</th><th>Cashflow</th><th>Action</th>
+</tr>
+</thead>
+<tbody id="lignes"></tbody>
+</table>
+
+<div class="result">
+Reste à vivre :
+<span id="revenuFinalGlobal">0 €</span>
+</div>
+
+<canvas id="graph"></canvas>
+
+</div>
+
+<script>
+// ===================== ELEMENTS =====================
+const profileSelect = document.getElementById("profileSelect");
+const profileName = document.getElementById("profileName");
+const profileSalaire = document.getElementById("profileSalaire");
+const profileCharges = document.getElementById("profileCharges");
+
+const nom = document.getElementById("nom");
+const type = document.getElementById("type");
+const prix = document.getElementById("prix");
+const apport = document.getElementById("apport");
+const loyer = document.getElementById("loyer");
+const creditConso = document.getElementById("creditConso");
+const taux = document.getElementById("taux");
+const duree = document.getElementById("duree");
+const tauxLoyer = document.getElementById("tauxLoyer");
+
+const lignesEl = document.getElementById("lignes");
+const revenuFinalEl = document.getElementById("revenuFinalGlobal");
+const graphEl = document.getElementById("graph");
+const blocImmo = document.getElementById("blocImmo");
+const blocConso = document.getElementById("blocConso");
+
+// ===================== DATA =====================
+let profiles = JSON.parse(localStorage.getItem("profiles")) || [];
+let currentProfileId = localStorage.getItem("currentProfileId");
+let credits = JSON.parse(localStorage.getItem("credits_data")) || [];
+let chart = null;
+
+// ===================== PROFILS =====================
+function loadProfiles(){
+  profileSelect.innerHTML="";
+  profiles.forEach(p=>{
+    const o=document.createElement("option");
+    o.value=p.id;
+    o.textContent=p.name;
+    if(p.id===currentProfileId) o.selected=true;
+    profileSelect.appendChild(o);
+  });
+
+  const active=profiles.find(p=>p.id===currentProfileId);
+  if(active){
+    profileName.value=active.name;
+    profileSalaire.value=active.salaire;
+    profileCharges.value=active.charges;
+  }
+}
+
+function saveProfile(){
+  const id=currentProfileId||Date.now().toString();
+  const p={id,name:profileName.value||"Profil",salaire:+profileSalaire.value||0,charges:+profileCharges.value||0};
+  const i=profiles.findIndex(x=>x.id===id);
+  i>=0?profiles[i]=p:profiles.push(p);
+  currentProfileId=id;
+  localStorage.setItem("profiles",JSON.stringify(profiles));
+  localStorage.setItem("currentProfileId",id);
+  loadProfiles(); afficher();
+}
+
+function deleteProfile(){
+  if(!currentProfileId) return;
+  profiles=profiles.filter(p=>p.id!==currentProfileId);
+  currentProfileId=null;
+  localStorage.setItem("profiles",JSON.stringify(profiles));
+  localStorage.removeItem("currentProfileId");
+  loadProfiles(); afficher();
+}
+
+profileSelect.addEventListener("change",()=>{
+  currentProfileId=profileSelect.value;
+  localStorage.setItem("currentProfileId",currentProfileId);
+  loadProfiles(); afficher();
+});
+
+// ===================== CREDIT =====================
+function changerType(){
+  blocImmo.classList.toggle("hidden",type.value==="conso");
+  blocConso.classList.toggle("hidden",type.value!=="conso");
+}
+
+function mensualite(c,t,d){
+  let r=t/100/12,n=d*12;
+  return c>0&&r>0?c*r/(1-Math.pow(1+r,-n)):0;
+}
+
+function ajouter(){
+  let credit=0,notaire=0;
+  if(type.value==="immo"){
+    notaire=(+prix.value||0)*0.0788556;
+    credit=Math.max((+prix.value||0)-(+apport.value||0),0);
+  } else credit=+creditConso.value||0;
+
+  const m=mensualite(credit,+taux.value||0,+duree.value||0);
+
+  credits.push({
+    nom:nom.value||"Projet",
+    type:type.value,
+    prix:+prix.value||0,
+    apport:+apport.value||0,
+    notaire,
+    loyer:+loyer.value||0,
+    mensualite:m,
+    cashflow:(+loyer.value||0)-m
+  });
+
+  localStorage.setItem("credits_data",JSON.stringify(credits));
+  afficher();
+}
+
+// ===================== AFFICHAGE =====================
+function afficher(){
+  const profil=profiles.find(p=>p.id===currentProfileId)||{salaire:0,charges:0};
+  let html="", loyers=0, mens=0;
+
+  credits.forEach((c,i)=>{
+    loyers+=c.loyer;
+    mens+=c.mensualite;
+    let base=profil.salaire+(loyers*(+tauxLoyer.value||0)/100);
+    let end=base?mens/base*100:0;
+
+    html+=`<tr>
+<td>${c.nom}</td><td>${c.type}</td><td>${c.prix}</td>
+<td>${c.apport}</td><td>${c.notaire.toFixed(0)}</td>
+<td>${c.loyer}</td><td>${c.mensualite.toFixed(2)}</td>
+<td style="color:${end>=35?'red':'green'}">${end.toFixed(1)}%</td>
+<td class="${c.cashflow>=0?'pos':'neg'}">${c.cashflow.toFixed(2)}</td>
+<td><button class="delete" onclick="credits.splice(${i},1);localStorage.setItem('credits_data',JSON.stringify(credits));afficher()">🗑️</button></td>
+</tr>`;
+  });
+
+  lignesEl.innerHTML=html;
+  const reste=profil.salaire+loyers-mens-profil.charges;
+  revenuFinalEl.textContent=reste.toFixed(2)+" €";
+  drawGraph(reste);
+}
+
+function drawGraph(v){
+  if(chart) chart.destroy();
+  chart=new Chart(graphEl,{
+    type:"bar",
+    data:{labels:["Reste à vivre"],datasets:[{data:[v],backgroundColor:v>=0?"green":"red"}]},
+    options:{plugins:{legend:{display:false},datalabels:{formatter:v=>v.toFixed(0)+" €"}}},
+    plugins:[ChartDataLabels]
+  });
+}
+
+// ===================== INIT =====================
+changerType();
+loadProfiles();
+afficher();
+</script>
+</body>
+</html>
